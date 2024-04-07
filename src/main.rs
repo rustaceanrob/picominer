@@ -3,28 +3,39 @@
 //! This will blink an LED attached to GP25, which is the pin the Pico uses for the on-board LED.
 #![no_std]
 #![no_main]
-
-use bsp::entry;
+extern crate alloc;
+use alloc::string::ToString;
+use alloc_cortex_m::CortexMHeap;
+use bsp::{
+    entry,
+    hal::{fugit::HertzU32, gpio::FunctionI2C},
+};
 use defmt::*;
 use defmt_rtt as _;
 use embedded_hal::digital::v2::OutputPin;
 use panic_probe as _;
+#[global_allocator]
+static ALLOCATOR: CortexMHeap = CortexMHeap::empty();
+const HEAP_SIZE: usize = 1024 * 256;
 
 // Provide an alias for our BSP so we can switch targets quickly.
 // Uncomment the BSP you included in Cargo.toml, the rest of the code does not need to change.
 use rp_pico as bsp;
 // use sparkfun_pro_micro_rp2040 as bsp;
-
+use bitcoin::{blockdata::constants::genesis_block, hashes::Hash};
 use bsp::hal::{
     clocks::{init_clocks_and_plls, Clock},
     pac,
     sio::Sio,
     watchdog::Watchdog,
 };
+use hex;
 
 #[entry]
 fn main() -> ! {
-    info!("Program start");
+    info!("allocating");
+    unsafe { ALLOCATOR.init(cortex_m_rt::heap_start() as usize, HEAP_SIZE) }
+    info!("start");
     let mut pac = pac::Peripherals::take().unwrap();
     let core = pac::CorePeripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
@@ -53,6 +64,22 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
+    let scl_pin = pins.gpio3.into_function::<FunctionI2C>();
+    let sda_pin = pins.gpio2.into_function::<FunctionI2C>();
+
+    // Create the I²C drive, using the two pre-configured pins. This will fail
+    // at compile time if the pins are in the wrong mode, or if this I²C
+    // peripheral isn't available on these pins!
+
+    let _i2c = bsp::hal::I2C::i2c1(
+        pac.I2C1,
+        sda_pin,
+        scl_pin,
+        HertzU32::kHz(400),
+        &mut pac.RESETS,
+        &clocks.system_clock,
+    );
+
     // This is the correct pin on the Raspberry Pico board. On other boards, even if they have an
     // on-board LED, it might need to be changed.
     //
@@ -63,15 +90,37 @@ fn main() -> ! {
     // LED to one of the GPIO pins, and reference that pin here. Don't forget adding an appropriate resistor
     // in series with the LED.
     let mut led_pin = pins.led.into_push_pull_output();
+    delay.delay_ms(1000);
+    led_pin.set_high().unwrap();
+    delay.delay_ms(500);
+    led_pin.set_low().unwrap();
+    delay.delay_ms(500);
+
+    let genesis_block = genesis_block(bitcoin::Network::Signet);
+    let mut header = genesis_block.header;
+    let mut nonce = 0;
 
     loop {
-        info!("on!");
-        led_pin.set_high().unwrap();
-        delay.delay_ms(500);
-        info!("off!");
-        led_pin.set_low().unwrap();
-        delay.delay_ms(500);
+        header.nonce = nonce;
+        let target = header.target();
+        let h = header.block_hash().as_raw_hash().to_string();
+        info!("{}", h.as_str());
+        let pow = header.validate_pow(target);
+        match pow {
+            Ok(_block) => {
+                info!("found a valid block!");
+                led_pin.set_high().unwrap();
+                delay.delay_ms(10000);
+                led_pin.set_low().unwrap();
+                delay.delay_ms(500);
+            }
+            Err(_) => {
+                led_pin.set_high().unwrap();
+                delay.delay_ms(100);
+                led_pin.set_low().unwrap();
+                delay.delay_ms(100);
+            }
+        }
+        nonce = nonce.wrapping_add(1);
     }
 }
-
-// End of file

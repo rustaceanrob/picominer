@@ -5,6 +5,7 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+alloc-cortex-m = "0.4.1"
 cortex-m = "0.7"
 cortex-m-rt = "0.7"
 embedded-hal = { version = "0.2.5", features = ["unproven"] }
@@ -15,7 +16,11 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 
 # We're using a Pico by default on this template
 rp-pico = "0.8"
-
+bitcoin = { version = "0.31.2", default-features = false, features = [
+    "no-std",
+    "secp-lowmemory",
+] }
+hex = { version = "0.4", default-features = false }
 # but you can use any BSP. Uncomment this to use the pro_micro_rp2040 BSP instead
 # sparkfun-pro-micro-rp2040 = "0.7"
 
