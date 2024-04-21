@@ -1,10 +1,11 @@
 //! Blinks the LED on a Pico board
 //!
-//! This will blink an LED attached to GP25, which is the pin the Pico uses for the on-board LED.
 #![no_std]
 #![no_main]
 extern crate alloc;
-use alloc::string::ToString;
+
+use core::fmt::Write;
+
 use alloc_cortex_m::CortexMHeap;
 use bsp::{
     entry,
@@ -14,12 +15,11 @@ use defmt::*;
 use defmt_rtt as _;
 use embedded_hal::digital::v2::OutputPin;
 use panic_probe as _;
+
 #[global_allocator]
 static ALLOCATOR: CortexMHeap = CortexMHeap::empty();
 const HEAP_SIZE: usize = 1024 * 256;
 
-// Provide an alias for our BSP so we can switch targets quickly.
-// Uncomment the BSP you included in Cargo.toml, the rest of the code does not need to change.
 use rp_pico as bsp;
 // use sparkfun_pro_micro_rp2040 as bsp;
 use bitcoin::{blockdata::constants::genesis_block, hashes::Hash};
@@ -29,7 +29,7 @@ use bsp::hal::{
     sio::Sio,
     watchdog::Watchdog,
 };
-use hex;
+use ssd1306::{size::DisplaySize128x64, I2CDisplayInterface, Ssd1306};
 
 #[entry]
 fn main() -> ! {
@@ -71,7 +71,7 @@ fn main() -> ! {
     // at compile time if the pins are in the wrong mode, or if this I²C
     // peripheral isn't available on these pins!
 
-    let _i2c = bsp::hal::I2C::i2c1(
+    let i2c = bsp::hal::I2C::i2c1(
         pac.I2C1,
         sda_pin,
         scl_pin,
@@ -80,21 +80,23 @@ fn main() -> ! {
         &clocks.system_clock,
     );
 
-    // This is the correct pin on the Raspberry Pico board. On other boards, even if they have an
-    // on-board LED, it might need to be changed.
-    //
-    // Notably, on the Pico W, the LED is not connected to any of the RP2040 GPIOs but to the cyw43 module instead.
-    // One way to do that is by using [embassy](https://github.com/embassy-rs/embassy/blob/main/examples/rp/src/bin/wifi_blinky.rs)
-    //
-    // If you have a Pico W and want to toggle a LED with a simple GPIO output pin, you can connect an external
-    // LED to one of the GPIO pins, and reference that pin here. Don't forget adding an appropriate resistor
-    // in series with the LED.
+    let interface = I2CDisplayInterface::new(i2c);
+    let mut display = Ssd1306::new(
+        interface,
+        DisplaySize128x64,
+        ssd1306::rotation::DisplayRotation::Rotate0,
+    )
+    .into_terminal_mode();
+
+    display.clear().unwrap();
+    // Flash a pin to signify the start of the program.
+
     let mut led_pin = pins.led.into_push_pull_output();
-    delay.delay_ms(1000);
+    delay.delay_ms(1_000);
     led_pin.set_high().unwrap();
     delay.delay_ms(500);
     led_pin.set_low().unwrap();
-    delay.delay_ms(500);
+    delay.delay_ms(1_000);
 
     let genesis_block = genesis_block(bitcoin::Network::Signet);
     let mut header = genesis_block.header;
@@ -103,24 +105,25 @@ fn main() -> ! {
     loop {
         header.nonce = nonce;
         let target = header.target();
-        let h = header.block_hash().as_raw_hash().to_string();
-        info!("{}", h.as_str());
+        let h = header.block_hash().as_raw_hash().to_byte_array();
+        display
+            .write_str(unsafe { core::str::from_utf8_unchecked(&h) })
+            .unwrap();
         let pow = header.validate_pow(target);
         match pow {
             Ok(_block) => {
                 info!("found a valid block!");
                 led_pin.set_high().unwrap();
-                delay.delay_ms(10000);
+                delay.delay_ms(1_000_000);
                 led_pin.set_low().unwrap();
-                delay.delay_ms(500);
             }
             Err(_) => {
                 led_pin.set_high().unwrap();
                 delay.delay_ms(100);
                 led_pin.set_low().unwrap();
-                delay.delay_ms(100);
             }
         }
         nonce = nonce.wrapping_add(1);
+        display.clear().unwrap();
     }
 }
